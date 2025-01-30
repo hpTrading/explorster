@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Order Book System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: none;
+        }
+        .auth-container {
+            max-width: 400px;
+            margin: 0 auto;
+        }
+        .order-book {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+        .order-side {
+            width: 45%;
+        }
+        .user-orders {
+            margin-top: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            padding: 8px;
+            text-align: right;
+            border: 1px solid #ddd;
+        }
+        th {
+            background-color: #f5f5f5;
+        }
+        .buy-orders td:first-child { color: green; }
+        .sell-orders td:first-child { color: red; }
+        .balances {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #f5f5f5;
+        }
+    </style>
+</head>
+<body>
+    <div id="authContainer" class="auth-container">
+        <h2>Login</h2>
+        <form id="loginForm">
+            <input type="text" name="username" placeholder="Username" required>
+            <input type="password" name="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+        <button onclick="showRegister()">Register</button>
+        
+        <div id="registerForm" style="display: none;">
+            <h2>Register</h2>
+            <form id="registrationForm">
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="email" name="email" placeholder="Email" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Register</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="tradingContainer" class="container">
+        <h1>Trading Interface</h1>
+        <div class="balances" id="balances"></div>
+        
+        <form id="orderForm">
+            <select name="type" required>
+                <option value="buy">Buy</option>
+                <option value="sell">Sell</option>
+            </select>
+            <select name="orderType" required>
+                <option value="market">Market</option>
+                <option value="limit">Limit</option>
+                <option value="stop_loss">Stop Loss</option>
+                <option value="take_profit">Take Profit</option>
+            </select>
+            <input type="number" name="price" step="0.01" min="0.01" placeholder="Price" required>
+            <input type="number" name="triggerPrice" step="0.01" min="0.01" placeholder="Trigger Price" disabled>
+            <input type="number" name="quantity" min="0.0001" step="0.0001" placeholder="Quantity" required>
+            <button type="submit">Place Order</button>
+        </form>
+
+        <div class="order-book">
+            <div class="order-side">
+                <h2>Buy Orders</h2>
+                <table class="buy-orders">
+                    <thead>
+                        <tr>
+                            <th>Price</th>
+                            <th>Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="buyOrders"></tbody>
+                </table>
+            </div>
+            <div class="order-side">
+                <h2>Sell Orders</h2>
+                <table class="sell-orders">
+                    <thead>
+                        <tr>
+                            <th>Price</th>
+                            <th>Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sellOrders"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="user-orders">
+            <h2>Your Active Orders</h2>
+            <table id="activeOrders">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Order Type</th>
+                        <th>Price</th>
+                        <th>Trigger Price</th>
+                        <th>Quantity</th>
+                        <th>Filled</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let token = localStorage.getItem('token');
+        let ws = null;
+
+        // Auth functions
+        async function login(username, password) {
+            const response = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            
+            if (!response.ok) throw new Error('Login failed');
+            
+            const data = await response.json();
+            token = data.token;
+            localStorage.setItem('token', token);
+            
+            showTradingInterface();
+        }
+
+        async function register(username, email, password) {
+            const response = await fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email, password })
+            });
+            
+            if (!response.ok) throw new Error('Registration failed');
+            
+            await login(username, password);
+        }
+
+        // Trading interface functions
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://${window.location.host}?token=${token}`);
+            
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                if (message.type === 'orderbook_update') {
+                    updateOrderBook(message.data);
+                }
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWebSocket, 1000);
+            };
+        }
+
+        async function updateBalances() {
+            const response = await fetch('/api/balances', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const balances = await response.json();
+            
+            document.getElementById('balances').innerHTML = `
+                BTC: ${balances.BTC.toFixed(8)} | USD: ${balances.USD.toFixed(2)}
+            `;
+        }
+
+        async function updateActiveOrders() {
+            const response = await fetch('/api/orders/active', {
+
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const orders = await response.json();
+            
+            const tbody = document.querySelector('#activeOrders tbody');
+            tbody.innerHTML = orders.rows.map(order => `
+                <tr>
+                    <td>${order.type}</td>
+                    <td>${order.order_type}</td>
+                    <td>${order.price}</td>
+                    <td>${order.trigger_price || '-'}</td>
+                    <td>${order.quantity}</td>
+                    <td>${order.filled_quantity}</td>
+                    <td>${order.status}</td>
+                    <td>
+                        ${order.status !== 'filled' ? 
+                            `<button onclick="cancelOrder(${order.id})">Cancel</button>` : 
+                            '-'
+                        }
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function updateOrderBook(data) {
+            const buyOrdersTable = document.getElementById('buyOrders');
+            const sellOrdersTable = document.getElementById('sellOrders');
+
+            buyOrdersTable.innerHTML = data.buyOrders
+                .map(order => `
+                    <tr>
+                        <td>${order.price.toFixed(2)}</td>
+                        <td>${order.quantity.toFixed(8)}</td>
+                    </tr>
+                `).join('');
+
+            sellOrdersTable.innerHTML = data.sellOrders
+                .map(order => `
+                    <tr>
+                        <td>${order.price.toFixed(2)}</td>
+                        <td>${order.quantity.toFixed(8)}</td>
+                    </tr>
+                `).join('');
+        }
+
+        async function cancelOrder(orderId) {
+            try {
+                const response = await fetch(`/api/orders/${orderId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!response.ok) throw new Error('Failed to cancel order');
+                
+                await updateActiveOrders();
+            } catch (error) {
+                alert('Error cancelling order: ' + error.message);
+            }
+        }
+
+        // UI Event Handlers
+        document.getElementById('orderForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const orderData = {
+                type: formData.get('type'),
+                orderType: formData.get('orderType'),
+                price: parseFloat(formData.get('price')),
+                quantity: parseFloat(formData.get('quantity')),
+                currencyPair: 'BTC/USD'
+            };
+
+            if (['stop_loss', 'take_profit'].includes(orderData.orderType)) {
+                orderData.triggerPrice = parseFloat(formData.get('triggerPrice'));
+            }
+
+            try {
+                const response = await fetch('/api/orders', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(orderData)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message);
+                }
+
+                e.target.reset();
+                await updateActiveOrders();
+                await updateBalances();
+            } catch (error) {
+                alert('Error placing order: ' + error.message);
+            }
+        });
+
+        // Handle order type selection
+        document.querySelector('select[name="orderType"]').addEventListener('change', (e) => {
+            const triggerPriceInput = document.querySelector('input[name="triggerPrice"]');
+            const priceInput = document.querySelector('input[name="price"]');
+            
+            if (['stop_loss', 'take_profit'].includes(e.target.value)) {
+                triggerPriceInput.disabled = false;
+                triggerPriceInput.required = true;
+            } else {
+                triggerPriceInput.disabled = true;
+                triggerPriceInput.required = false;
+                triggerPriceInput.value = '';
+            }
+
+            if (e.target.value === 'market') {
+                priceInput.disabled = true;
+                priceInput.required = false;
+            } else {
+                priceInput.disabled = false;
+                priceInput.required = true;
+            }
+        });
+
+        // Auth form handlers
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            try {
+                await login(formData.get('username'), formData.get('password'));
+            } catch (error) {
+                alert('Login failed: ' + error.message);
+            }
+        });
+
+        document.getElementById('registrationForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            try {
+                await register(
+                    formData.get('username'),
+                    formData.get('email'),
+                    formData.get('password')
+                );
+            } catch (error) {
+                alert('Registration failed: ' + error.message);
+            }
+        });
+
+        function showRegister() {
+            document.getElementById('registerForm').style.display = 'block';
+        }
+
+        function showTradingInterface() {
+            document.getElementById('authContainer').style.display = 'none';
+            document.getElementById('tradingContainer').style.display = 'block';
+            connectWebSocket();
+            updateBalances();
+            updateActiveOrders();
+        }
+
+        // Initialize the interface
+        if (token) {
+            showTradingInterface();
+        }
+    </script>
+</body>
+</html>        
+                
