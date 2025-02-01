@@ -154,10 +154,30 @@ app.get('/api/orders/history', authenticateToken, async (req, res) => {
     }
 });
 
+app.post('/api/balances/add', authenticateToken, async (req, res) => {
+    try {
+        const { currency, amount } = req.body;
+        if (!currency || !amount || amount <= 0) {
+            return res.status(400).json({ error: 'Invalid currency or amount' });
+        }
+        if (!['ES', 'USD'].includes(currency)) {
+            return res.status(400).json({ error: 'Invalid currency. Must be ES or USD' });
+        }
+        const result = await db.updateBalance(req.user.id, currency, amount);
+        if (result.rows.length === 0) {
+            return res.status(500).json({ error: 'Failed to update balance' });
+        }
+        res.json({ message: 'Balance updated successfully' });
+    } catch (error) {
+        console.error('Balance update error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/balances', authenticateToken, async (req, res) => {
     try {
         const balances = {
-            BTC: await db.getBalance(req.user.id, 'BTC'),
+            ES: await db.getBalance(req.user.id, 'ES'),
             USD: await db.getBalance(req.user.id, 'USD')
         };
         res.json(balances);
@@ -173,6 +193,6 @@ server.listen(PORT, () => {
 
 // Price feed simulation for trigger orders (in production, you'd use real market data)
 setInterval(async () => {
-    const currentPrice = Math.random() * (50000 - 45000) + 45000; // Random price between 45k-50k
-    await orderbook.checkTriggerOrders(currentPrice, 'BTC/USD');
+    const currentPrice = Math.random() * (4800 - 4700) + 4700; // Random price between 4700-4800 for ES
+    await orderbook.checkTriggerOrders(currentPrice, 'ES/USD');
 }, 5000);

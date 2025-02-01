@@ -28,7 +28,7 @@ CREATE TABLE orders (
     filled_quantity INTEGER DEFAULT 0 CHECK (filled_quantity <= quantity),
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status TEXT CHECK (status IN ('open', 'partial', 'filled', 'cancelled', 'triggered')),
-    currency_pair VARCHAR(10) NOT NULL -- e.g., 'BTC/USD'
+    currency_pair VARCHAR(10) NOT NULL -- e.g., 'ES/USD'
 );
 
 -- Modified trades table

@@ -1,69 +1,100 @@
 const { Pool } = require('pg');
 const db = require('./database');
 
+
 const pool = new Pool({
     user: 'postgres',
     host: 'localhost',
-    database: 'orderbook',
-    password: 'your_password',
+    database: 'hp_trading',
+    password: 'justin',
     port: 5432,
 });
 
 // Utility functions
 const calculateMarketPrice = async (type, quantity, currencyPair) => {
-    const oppositeType = type === 'buy' ? 'sell' : 'buy';
-    const orders = await db.getOpenOrders(oppositeType, currencyPair);
-    let remainingQuantity = quantity;
-    let totalCost = 0;
+    try {
+        const oppositeType = type === 'buy' ? 'sell' : 'buy';
+        const orders = await db.getOpenOrders(oppositeType, currencyPair);
+        
+        if (orders.rows.length === 0) {
+            throw new Error('No matching orders available for market execution');
+        }
 
-    for (const order of orders.rows) {
-        const available = order.quantity - order.filled_quantity;
-        const fillQuantity = Math.min(remainingQuantity, available);
-        totalCost += fillQuantity * order.price;
-        remainingQuantity -= fillQuantity;
+        let remainingQuantity = quantity;
+        let totalCost = 0;
 
-        if (remainingQuantity <= 0) break;
+        for (const order of orders.rows) {
+            const available = order.quantity - order.filled_quantity;
+            const fillQuantity = Math.min(remainingQuantity, available);
+            totalCost += fillQuantity * order.price;
+            remainingQuantity -= fillQuantity;
+
+            if (remainingQuantity <= 0) break;
+        }
+
+        if (remainingQuantity > 0) {
+            throw new Error('Insufficient liquidity for market order');
+        }
+
+        return totalCost / quantity; // Average execution price
+    } catch (error) {
+        console.error('Market price calculation error:', error);
+        throw error;
     }
-
-    if (remainingQuantity > 0) {
-        throw new Error('Insufficient liquidity for market order');
-    }
-
-    return totalCost / quantity; // Average execution price
 };
 
 // Order validation functions
 const validateOrder = async (userId, type, orderType, price, quantity, currencyPair, triggerPrice) => {
-    if (quantity <= 0) {
-        throw new Error('Quantity must be greater than 0');
-    }
-
-    if (orderType !== 'market' && price <= 0) {
-        throw new Error('Price must be greater than 0');
-    }
-
-    if (['stop_loss', 'take_profit'].includes(orderType) && (!triggerPrice || triggerPrice <= 0)) {
-        throw new Error('Trigger price must be specified for stop-loss and take-profit orders');
-    }
-
-    // Check user balance
-    const [baseCurrency, quoteCurrency] = currencyPair.split('/');
-    const userBalance = type === 'buy' 
-        ? await db.getBalance(userId, quoteCurrency)
-        : await db.getBalance(userId, baseCurrency);
-
-    if (type === 'buy') {
-        const estimatedCost = orderType === 'market' 
-            ? await calculateMarketPrice(type, quantity, currencyPair) * quantity
-            : price * quantity;
-            
-        if (userBalance < estimatedCost) {
-            throw new Error(`Insufficient ${quoteCurrency} balance`);
+    try {
+        // Validate currency pair
+        if (currencyPair !== 'ES/USD') {
+            throw new Error('Invalid currency pair. Only ES/USD is supported');
         }
-    } else {
-        if (userBalance < quantity) {
-            throw new Error(`Insufficient ${baseCurrency} balance`);
+
+        // Validate quantity (must be whole number for futures contracts)
+        if (!Number.isInteger(quantity) || quantity <= 0) {
+            throw new Error('Quantity must be a positive whole number');
         }
+
+        // Validate price (minimum tick size is 0.25 for ES)
+        if (orderType !== 'market') {
+            if (price <= 0) {
+                throw new Error('Price must be greater than 0');
+            }
+            if (price * 4 % 1 !== 0) {
+                throw new Error('Price must be in increments of 0.25');
+            }
+        }
+
+        // Validate trigger price for stop/take-profit orders
+        if (['stop_loss', 'take_profit'].includes(orderType)) {
+            if (!triggerPrice || triggerPrice <= 0) {
+                throw new Error('Trigger price must be specified for stop-loss and take-profit orders');
+            }
+            if (triggerPrice * 4 % 1 !== 0) {
+                throw new Error('Trigger price must be in increments of 0.25');
+            }
+        }
+
+        // Check user balance
+        if (type === 'buy') {
+            const estimatedCost = orderType === 'market'
+                ? await calculateMarketPrice(type, quantity, currencyPair) * quantity
+                : price * quantity;
+                
+            const usdBalance = await db.getBalance(userId, 'USD');
+            if (usdBalance < estimatedCost) {
+                throw new Error(`Insufficient USD balance. Required: $${estimatedCost.toFixed(2)}, Available: $${usdBalance.toFixed(2)}`);
+            }
+        } else {
+            const esBalance = await db.getBalance(userId, 'ES');
+            if (esBalance < quantity) {
+                throw new Error(`Insufficient ES contracts. Required: ${quantity}, Available: ${esBalance}`);
+            }
+        }
+    } catch (error) {
+        console.error('Order validation error:', error);
+        throw error;
     }
 };
 

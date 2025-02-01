@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>hp_Tradign</title>
+    <title>E-mini S&P 500 Trading</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -49,12 +49,22 @@
             padding: 10px;
             background-color: #f5f5f5;
         }
+        .balance-management {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .balance-management input {
+            margin: 5px;
+            padding: 5px;
+        }
     </style>
 </head>
 <body>
     <div id="authContainer" class="auth-container">
         <h2>Login</h2>
-        <div>goo for it fool</div>
         <form id="loginForm">
             <input type="text" name="username" placeholder="Username" required>
             <input type="password" name="password" placeholder="Password" required>
@@ -74,8 +84,21 @@
     </div>
 
     <div id="tradingContainer" class="container">
-        <h2>Trading Interface</h2>
+        <h2>E-mini S&P 500 Trading Interface</h2>
         <div class="balances" id="balances"></div>
+
+        <!-- Add Balance Management Section -->
+        <div class="balance-management">
+            <h3>Manage Balance</h3>
+            <form id="addBalanceForm">
+                <select name="currency" required>
+                    <option value="ES">ES (E-mini S&P)</option>
+                    <option value="USD">USD</option>
+                </select>
+                <input type="number" name="amount" step="0.01" min="0.01" placeholder="Amount" required>
+                <button type="submit">Add Balance</button>
+            </form>
+        </div>
         
         <form id="orderForm">
             <select name="type" required>
@@ -88,9 +111,9 @@
                 <option value="stop_loss">Stop Loss</option>
                 <option value="take_profit">Take Profit</option>
             </select>
-            <input type="number" name="price" step="0.01" min="0.01" placeholder="Price" required>
-            <input type="number" name="triggerPrice" step="0.01" min="0.01" placeholder="Trigger Price" disabled>
-            <input type="number" name="quantity" min="0.0001" step="0.0001" placeholder="Quantity" required>
+            <input type="number" name="price" step="0.25" min="0.00" placeholder="Price" required>
+            <input type="number" name="triggerPrice" step="0.25" min="0.00" placeholder="Trigger Price" disabled>
+            <input type="number" name="quantity" min="1" step="1" placeholder="Quantity (contracts)" required>
             <button type="submit">Place Order</button>
         </form>
 
@@ -197,13 +220,12 @@
             const balances = await response.json();
             
             document.getElementById('balances').innerHTML = `
-                BTC: ${balances.BTC.toFixed(8)} | USD: ${balances.USD.toFixed(2)}
+                ES: ${balances.ES || 0} contracts | USD: $${balances.USD?.toFixed(2) || '0.00'}
             `;
         }
 
         async function updateActiveOrders() {
             const response = await fetch('/api/orders/active', {
-
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             const orders = await response.json();
@@ -236,7 +258,7 @@
                 .map(order => `
                     <tr>
                         <td>${order.price.toFixed(2)}</td>
-                        <td>${order.quantity.toFixed(8)}</td>
+                        <td>${order.quantity}</td>
                     </tr>
                 `).join('');
 
@@ -244,7 +266,7 @@
                 .map(order => `
                     <tr>
                         <td>${order.price.toFixed(2)}</td>
-                        <td>${order.quantity.toFixed(8)}</td>
+                        <td>${order.quantity}</td>
                     </tr>
                 `).join('');
         }
@@ -264,23 +286,75 @@
             }
         }
 
-        // UI Event Handlers
+        // Add balance form handler
+        document.getElementById('addBalanceForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            try {
+                const response = await fetch('/api/balances/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        currency: formData.get('currency'),
+                        amount: parseFloat(formData.get('amount'))
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to add balance');
+                }
+
+                await updateBalances();
+                e.target.reset();
+            } catch (error) {
+                alert('Error adding balance: ' + error.message);
+            }
+        });
+
+        // Order form handler
         document.getElementById('orderForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
+            // Get form values
+            const type = formData.get('type');
+            const orderType = formData.get('orderType');
+            const price = formData.get('price');
+            const quantity = formData.get('quantity');
+            
+            // Validate inputs
+            if (orderType !== 'market' && (price === '' || isNaN(parseFloat(price)))) {
+                alert('Please enter a valid price');
+                return;
+            }
+            if (quantity === '' || isNaN(parseInt(quantity))) {
+                alert('Please enter a valid quantity');
+                return;
+            }
+
             const orderData = {
-                type: formData.get('type'),
-                orderType: formData.get('orderType'),
-                price: parseFloat(formData.get('price')),
-                quantity: parseFloat(formData.get('quantity')),
-                currencyPair: 'BTC/USD'
+                type,
+                orderType,
+                price: orderType === 'market' ? 0 : Math.round(parseFloat(price) * 4) / 4,
+                quantity: parseInt(quantity),
+                currencyPair: 'ES/USD'
             };
 
             if (['stop_loss', 'take_profit'].includes(orderData.orderType)) {
-                orderData.triggerPrice = parseFloat(formData.get('triggerPrice'));
+                const triggerPrice = formData.get('triggerPrice');
+                if (triggerPrice === '' || isNaN(parseFloat(triggerPrice))) {
+                    alert('Please enter a valid trigger price');
+                    return;
+                }
+                orderData.triggerPrice = Math.round(parseFloat(triggerPrice) * 4) / 4;
             }
 
+            console.log('Sending order:', orderData); // Debug log
+
             try {
+                console.log('Attempting to place order:', orderData);
                 const response = await fetch('/api/orders', {
                     method: 'POST',
                     headers: {
@@ -290,15 +364,21 @@
                     body: JSON.stringify(orderData)
                 });
 
+                const responseData = await response.json();
+                console.log('Server response:', responseData);
+
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.message);
+                    if (responseData.error?.includes('Price must be in increments of 0.25')) {
+                        throw new Error('Price must be in increments of 0.25 (e.g., 4.00, 4.25, 4.50, 4.75)');
+                    }
+                    throw new Error(responseData.error || 'Unknown error occurred');
                 }
 
                 e.target.reset();
                 await updateActiveOrders();
                 await updateBalances();
             } catch (error) {
+                console.error('Order error:', error);
                 alert('Error placing order: ' + error.message);
             }
         });
@@ -320,9 +400,16 @@
             if (e.target.value === 'market') {
                 priceInput.disabled = true;
                 priceInput.required = false;
+                priceInput.value = ''; // Clear price for market orders
             } else {
                 priceInput.disabled = false;
                 priceInput.required = true;
+                // Force valid price increments when user leaves the input
+                priceInput.addEventListener('blur', function() {
+                    if (this.value && !isNaN(parseFloat(this.value))) {
+                        this.value = (Math.round(parseFloat(this.value) * 4) / 4).toFixed(2);
+                    }
+                });
             }
         });
 
@@ -369,5 +456,4 @@
         }
     </script>
 </body>
-</html>        
-                
+</html>

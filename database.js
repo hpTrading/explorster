@@ -4,8 +4,8 @@ const bcrypt = require('bcrypt');
 const pool = new Pool({
     user: process.env.DB_USER || 'postgres',
     host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'orderbook',
-    password: process.env.DB_PASSWORD || 'your_password',
+    database: process.env.DB_NAME || 'hp_trading',
+    password: process.env.DB_PASSWORD || 'justin',
     port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : 5432,
 });
 
@@ -49,20 +49,25 @@ const validateUser = async (username, password) => {
 
 // Balance management functions
 const updateBalance = async (userId, currency, amount, client = pool) => {
-    const text = `
-        INSERT INTO user_balances (user_id, currency, amount)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, currency)
-        DO UPDATE SET amount = user_balances.amount + $3
-        RETURNING *
-    `;
-    return client.query(text, [userId, currency, amount]);
+    try {
+        const text = `
+            INSERT INTO user_balances (user_id, currency, amount)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, currency)
+            DO UPDATE SET amount = COALESCE(user_balances.amount, 0) + $3
+            RETURNING *
+        `;
+        return client.query(text, [userId, currency, amount]);
+    } catch (error) {
+        console.error('Database error in updateBalance:', error);
+        throw error;
+    }
 };
 
 const getBalance = async (userId, currency) => {
     const text = 'SELECT amount FROM user_balances WHERE user_id = $1 AND currency = $2';
     const result = await query(text, [userId, currency]);
-    return result.rows[0]?.amount || 0;
+    return Number(result.rows[0]?.amount || 0);
 };
 
 // Enhanced order management functions
@@ -164,6 +169,18 @@ const getOrderBook = async (currencyPair) => {
     };
 };
 
+const insertTrade = async (buyOrderId, sellOrderId, price, quantity, currencyPair, client = pool) => {
+    const text = `
+        INSERT INTO trades (
+            buy_order_id, sell_order_id, price, quantity, currency_pair
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+    `;
+    const values = [buyOrderId, sellOrderId, price, quantity, currencyPair];
+    return client.query(text, values);
+};
+
 module.exports = {
     query,
     createUser,
@@ -175,5 +192,6 @@ module.exports = {
     getOpenOrders,
     getTriggeredOrders,
     getUserOrders,
-    getOrderBook
+    getOrderBook,
+    insertTrade
 };

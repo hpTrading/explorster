@@ -1,0 +1,9 @@
+{
+  "watch": [
+    "server.js",
+    "orderbook.js",
+    "database.js",
+    "public/**/*"
+  ],
+  "ext": "js,json,html"
+}
